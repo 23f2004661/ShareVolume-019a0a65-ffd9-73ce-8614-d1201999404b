@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Company Shares Outstanding</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            margin: 20px;
+            background-color: #f4f7f6;
+            color: #333;
+        }
+        .container {
+            max-width: 800px;
+            margin: auto;
+            background: #fff;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+        }
+        h1, h2 {
+            color: #005f73;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        #share-entity-name {
+            font-size: 2em;
+            font-weight: bold;
+            margin-bottom: 30px;
+        }
+        .share-data {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            text-align: center;
+            margin-top: 20px;
+        }
+        .share-item {
+            background-color: #e0f2f7;
+            padding: 15px;
+            border-radius: 5px;
+            border: 1px solid #b3e5fc;
+        }
+        .share-item h3 {
+            margin-top: 0;
+            color: #003f5c;
+        }
+        .share-value {
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #0077b6;
+        }
+        .share-fy {
+            font-size: 0.9em;
+            color: #555;
+        }
+        .loading, .error {
+            text-align: center;
+            font-size: 1.2em;
+            margin-top: 20px;
+        }
+        .loading {
+            color: #666;
+        }
+        .error {
+            color: #d32f2f;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 id="share-entity-name">Company Shares Outstanding</h1>
+        <div class="share-data">
+            <div class="share-item">
+                <h3>Maximum Shares</h3>
+                <div class="share-value" id="share-max-value">-</div>
+                <div class="share-fy" id="share-max-fy">-</div>
+            </div>
+            <div class="share-item">
+                <h3>Minimum Shares</h3>
+                <div class="share-value" id="share-min-value">-</div>
+                <div class="share-fy" id="share-min-fy">-</div>
+            </div>
+        </div>
+        <div class="loading" id="loading-message">Loading data...</div>
+        <div class="error" id="error-message" style="display: none;"></div>
+    </div>
+
+    <script>
+        const SEC_API_BASE_URL = "https://data.sec.gov/api/xbrl/companyconcept/CIK";
+        const DEFAULT_CIK = "0001730168"; // Broadcom
+
+        async function fetchData(cik) {
+            const userAgent = "AVGO AVGO (broadcom.com) AVGO-Share-Fetcher/1.0 (mailto:your.email@example.com)"; // Per SEC guidance
+            const url = `${SEC_API_BASE_URL}${cik}/dei/EntityCommonStockSharesOutstanding.json`;
+
+            try {
+                const response = await fetch(url, {
+                    headers: {
+                        'User-Agent': userAgent
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+                return data;
+            } catch (error) {
+                console.error("Error fetching SEC data:", error);
+                throw error; // Re-throw to be caught by caller
+            }
+        }
+
+        function processData(data) {
+            const entityName = data.entityName;
+            const shares = data.units.shares;
+
+            const filteredShares = shares
+                .filter(item => item.fy && parseInt(item.fy) > 2020 && item.val !== undefined && item.val !== null);
+
+            if (filteredShares.length === 0) {
+                throw new Error("No valid share data found after 2020.");
+            }
+
+            let maxShare = filteredShares[0];
+            let minShare = filteredShares[0];
+
+            filteredShares.forEach(item => {
+                const currentValue = parseFloat(item.val);
+                if (currentValue > parseFloat(maxShare.val)) {
+                    maxShare = item;
+                }
+                if (currentValue < parseFloat(minShare.val)) {
+                    minShare = item;
+                }
+            });
+
+            return {
+                entityName: entityName,
+                max: { val: parseFloat(maxShare.val), fy: maxShare.fy },
+                min: { val: parseFloat(minShare.val), fy: minShare.fy }
+            };
+        }
+
+        function renderUI(shareData) {
+            document.title = `${shareData.entityName} Shares Outstanding`;
+            document.getElementById('share-entity-name').textContent = shareData.entityName;
+            document.getElementById('share-max-value').textContent = shareData.max.val.toLocaleString();
+            document.getElementById('share-max-fy').textContent = `(FY ${shareData.max.fy})`;
+            document.getElementById('share-min-value').textContent = shareData.min.val.toLocaleString();
+            document.getElementById('share-min-fy').textContent = `(FY ${shareData.min.fy})`;
+            document.getElementById('loading-message').style.display = 'none';
+            document.getElementById('error-message').style.display = 'none';
+        }
+
+        async function initializeApp() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const cik = urlParams.get('CIK') || DEFAULT_CIK;
+
+            // Basic CIK validation (10 digits)
+            if (cik.length !== 10 || !/^\d+$/.test(cik)) {
+                displayError(`Invalid CIK format. Please provide a 10-digit CIK.`);
+                return;
+            }
+
+            try {
+                const rawData = await fetchData(cik);
+                const shareData = processData(rawData);
+                renderUI(shareData);
+            } catch (error) {
+                console.error("Initialization Error:", error);
+                displayError(`Could not load data. ${error.message}`);
+            }
+        }
+
+        function displayError(message) {
+            document.getElementById('loading-message').style.display = 'none';
+            const errorMessageElement = document.getElementById('error-message');
+            errorMessageElement.textContent = message;
+            errorMessageElement.style.display = 'block';
+            document.title = "Error";
+            document.getElementById('share-entity-name').textContent = "Error Loading Data";
+            document.getElementById('share-max-value').textContent = "-";
+            document.getElementById('share-max-fy').textContent = "-";
+            document.getElementById('share-min-value').textContent = "-";
+            document.getElementById('share-min-fy').textContent = "-";
+        }
+
+        // Listen for popstate event to handle back/forward navigation with CIK changes
+        window.addEventListener('popstate', initializeApp);
+
+        // Initial load
+        initializeApp();
+    </script>
+</body>
+</html>
